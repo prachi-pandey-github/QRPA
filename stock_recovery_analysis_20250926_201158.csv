@@ -1,0 +1,7 @@
+Stock Symbol,Drop Threshold (%),Total Drop Events Observed,Successful Recovery Events,Recovery Probability (%)
+ADANIENT.NS,10.0,1,1,100.0
+ADANIENT.NS,15.0,0,0,0.0
+ADANIENT.NS,20.0,0,0,0.0
+SHRIRAMFIN.NS,10.0,0,0,0.0
+SHRIRAMFIN.NS,15.0,0,0,0.0
+SHRIRAMFIN.NS,20.0,0,0,0.0
