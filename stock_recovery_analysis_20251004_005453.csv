@@ -1,0 +1,4 @@
+Stock Symbol,Drop Threshold (%),Total Drop Events Observed,Successful Recovery Events,Recovery Probability (%),Average Recovery Time (Days),Data Period,Analysis Date
+SHRIRAMFIN.NS,10.0,18,18,100.0,9.7,5 Years (Daily),2025-10-04
+SHRIRAMFIN.NS,15.0,16,12,75.0,23.0,5 Years (Daily),2025-10-04
+SHRIRAMFIN.NS,20.0,11,11,100.0,57.8,5 Years (Daily),2025-10-04

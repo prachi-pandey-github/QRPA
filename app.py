@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 import warnings
 import os
 from dotenv import load_dotenv
+import urllib3
 
 warnings.filterwarnings('ignore')
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -34,7 +36,7 @@ def fetch_intraday_data(symbol, start_date, end_date, api_key):
     """Fetch 1-minute intraday data from FMP API"""
     url = f"{BASE_URL}/historical-chart/1min/{symbol}?from={start_date}&to={end_date}&apikey={api_key}"
     print(f"Fetching data from: {url}")
-    response = requests.get(url)
+    response = requests.get(url, verify=False)
     if response.status_code == 200:
         data = response.json()
         if not data:
@@ -71,7 +73,7 @@ class StockRecoveryAnalyzer:
     def __init__(self):
         self.data_source = 'Financial Modeling Prep API'
         
-    def fetch_historical_data(self, symbol, period="60d", interval="1min"):
+    def fetch_historical_data(self, symbol, period="5y", interval="1day"):
         """Fetch historical OHLCV data for the specified period and interval"""
         try:
             if not symbol.endswith('.NS') and symbol in ['ADANIENT', 'SHRIRAMFIN']:
@@ -80,16 +82,47 @@ class StockRecoveryAnalyzer:
             print(f"Fetching {period} of {interval} data for {symbol}...")
             
             end_date = datetime.now()
-            if period == "60d":
+            if period == "5y":
+                start_date = end_date - timedelta(days=5*365)  # 5 years
+            elif period == "60d":
                 start_date = end_date - timedelta(days=60)
             elif period == "30d":
                 start_date = end_date - timedelta(days=30)
             elif period == "7d":
                 start_date = end_date - timedelta(days=7)
             else:
-                start_date = end_date - timedelta(days=60)
+                start_date = end_date - timedelta(days=5*365)  # Default to 5 years
             
-            data = fetch_full_intraday_data(symbol, start_date, end_date, API_KEY)
+            if interval == "1day":
+                # For daily data, use historical-price endpoint
+                url = f"{BASE_URL}/historical-price-full/{symbol}?from={start_date.strftime('%Y-%m-%d')}&to={end_date.strftime('%Y-%m-%d')}&apikey={API_KEY}"
+                print(f"Fetching daily data from: {url}")
+                response = requests.get(url, verify=False)
+                if response.status_code == 200:
+                    response_data = response.json()
+                    if 'historical' in response_data and response_data['historical']:
+                        data = pd.DataFrame(response_data['historical'])
+                        # Rename columns to match expected format
+                        data = data.rename(columns={'date': 'Datetime'})
+                        data['Datetime'] = pd.to_datetime(data['Datetime'])
+                        # Capitalize column names
+                        column_mapping = {
+                            'open': 'Open',
+                            'high': 'High', 
+                            'low': 'Low',
+                            'close': 'Close',
+                            'volume': 'Volume'
+                        }
+                        data = data.rename(columns=column_mapping)
+                    else:
+                        print("No historical data found in response.")
+                        data = pd.DataFrame()
+                else:
+                    print(f"Error fetching data: {response.status_code}")
+                    data = pd.DataFrame()
+            else:
+                # For intraday data, use existing method
+                data = fetch_full_intraday_data(symbol, start_date, end_date, API_KEY)
             
             if data.empty:
                 print(f"No data returned for {symbol}")
@@ -195,8 +228,8 @@ class StockRecoveryAnalyzer:
         print(f"    Found {len(drop_events)} valid drop events")
         return drop_events
     
-    def check_recovery(self, data, drop_event, price_type, max_lookahead=2880):
-        """Check if price recovers to target within lookahead period"""
+    def check_recovery(self, data, drop_event, price_type, max_lookahead=252):
+        """Check if price recovers to target within lookahead period (252 trading days = ~1 year)"""
         trough_idx = drop_event['trough_idx']
         target_recovery_price = drop_event['recovery_target_price']
         lookahead_limit = min(trough_idx + max_lookahead, len(data))
@@ -208,8 +241,8 @@ class StockRecoveryAnalyzer:
                 check_price = data.iloc[j]['High']
             
             if check_price >= target_recovery_price:
-                recovery_time_minutes = j - trough_idx
-                return True, recovery_time_minutes
+                recovery_time_days = j - trough_idx
+                return True, recovery_time_days
         
         return False, None
     
@@ -219,7 +252,7 @@ class StockRecoveryAnalyzer:
         print(f"\nAnalyzing: {symbol}")
         print("="*60)
         
-        data = self.fetch_historical_data(symbol, period="60d", interval="1min")
+        data = self.fetch_historical_data(symbol, period="5y", interval="1day")
         
         if data is None or len(data) == 0:
             print(f"No data available for {symbol}")
@@ -253,7 +286,10 @@ class StockRecoveryAnalyzer:
                 'Drop Threshold (%)': drop_threshold,
                 'Total Drop Events Observed': total_drop_events,
                 'Successful Recovery Events': successful_recoveries,
-                'Recovery Probability (%)': round(recovery_probability, 2)
+                'Recovery Probability (%)': round(recovery_probability, 2),
+                'Average Recovery Time (Days)': round(avg_recovery_time, 1) if avg_recovery_time else None,
+                'Data Period': '5 Years (Daily)',
+                'Analysis Date': datetime.now().strftime('%Y-%m-%d')
             })
         
         return results
@@ -284,11 +320,11 @@ def validate_configuration(config):
 def main():
     """Main execution function"""
     CONFIG = {
-        'LOOKBACK_PERIOD_FOR_PEAK': 1440,
+        'LOOKBACK_PERIOD_FOR_PEAK': 252,  # 252 trading days = 1 year lookback
         'DROP_THRESHOLDS_PERCENTAGE': [10.0, 15.0, 20.0],
         'RECOVERY_TARGET_PERCENTAGE': 40.0,
         'PRICE_TYPE_FOR_PEAK_TROUGH_DROP': "High/Low",
-        'MINIMUM_DROP_EVENT_DURATION': 5,
+        'MINIMUM_DROP_EVENT_DURATION': 2,  # 2 days minimum duration for daily data
         'STOCKS_TO_ANALYZE': ['ADANIENT.NS', 'SHRIRAMFIN.NS']
     }
     
@@ -345,11 +381,12 @@ def display_configuration(config):
     """Display current configuration parameters"""
     print("CONFIGURATION:")
     print("-" * 40)
-    print(f"Lookback Period: {config['LOOKBACK_PERIOD_FOR_PEAK']} intervals")
+    print(f"Data Period: 5 Years (Daily Data)")
+    print(f"Lookback Period: {config['LOOKBACK_PERIOD_FOR_PEAK']} trading days")
     print(f"Drop Thresholds: {config['DROP_THRESHOLDS_PERCENTAGE']}%")
     print(f"Recovery Target: {config['RECOVERY_TARGET_PERCENTAGE']}%")
     print(f"Price Type: {config['PRICE_TYPE_FOR_PEAK_TROUGH_DROP']}")
-    print(f"Min Duration: {config['MINIMUM_DROP_EVENT_DURATION']} intervals")
+    print(f"Min Duration: {config['MINIMUM_DROP_EVENT_DURATION']} days")
     print(f"Stocks: {config['STOCKS_TO_ANALYZE']}")
     print("-" * 40)
 
@@ -368,10 +405,10 @@ def create_custom_config(lookback_period=1440, drop_thresholds=[10.0, 15.0, 20.0
     }
 
 if __name__ == "__main__":
-    print("STOCK RECOVERY ANALYZER")
+    print("STOCK RECOVERY ANALYZER - 5 YEAR ANALYSIS")
     print("="*50)
     print("Analyzing recovery probability following price drops")
-    print("Using 1-minute data from Financial Modeling Prep API")
+    print("Using 5 years of daily data from Financial Modeling Prep API")
     print("="*50)
     
     results = main()
